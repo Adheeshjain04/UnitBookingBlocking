@@ -1,7 +1,9 @@
 trigger OpportunityBookingTrigger on Opportunity (before update) {
     Set<Id> unitIds = new Set<Id>();
+    List<Unit__c> unitsToUpdate = new List<Unit__c>();
+    List<Id> unitsForTimeout = new List<Id>();
     
-    // Collect all unit IDs
+    // Get All Unit IDs
     for (Opportunity opp : Trigger.new) {
         if (opp.Unit_Number__c != null) {
             unitIds.add(opp.Unit_Number__c);
@@ -30,7 +32,7 @@ trigger OpportunityBookingTrigger on Opportunity (before update) {
                     (unit.Blocked_By__c != opp.Id || unit.Blocked_By__c == null)) {
                     opp.StageName.addError('Cannot change opportunity stage while the unit is ' 
                         + unit.Unit_Status__c + '. Please wait until the unit becomes Available.');
-                    return;
+                    continue;
                 }
                 
                 // If this is a new booking and unit is available
@@ -38,12 +40,20 @@ trigger OpportunityBookingTrigger on Opportunity (before update) {
                     unit.Unit_Status__c = 'Blocked';
                     unit.Blocked_By__c = opp.Id;
                     unit.Blocking_Expiry__c = System.now().addMinutes(30);
-                    update unit;
-                    
-                    // Schedule the timeout Exactly After 30 Minutes
-                    BookingTimeoutManager.scheduleUnitTimeout(unit.Id);
+                    unitsToUpdate.add(unit);
+                    unitsForTimeout.add(unit.Id);
                 }
             }
         }
+    }
+    
+    // Bulk update units
+    if (!unitsToUpdate.isEmpty()) {
+        update unitsToUpdate;
+    }
+    
+    // Bulk schedule timeouts(After 30 Minutes)
+    if (!unitsForTimeout.isEmpty()) {
+        BookingTimeoutManager.scheduleUnitTimeouts(unitsForTimeout);
     }
 }
