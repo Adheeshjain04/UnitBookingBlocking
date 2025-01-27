@@ -10,7 +10,7 @@ public class UnitTimeoutSchedulable implements Schedulable {
             return;
         }
         
-        // Since we're scheduling one job per unit, we should only have one ID
+        // Since we're scheduling one job per unit, we should only have one ID - what if there are multiple units?
         Id unitId = unitIds[0];
         
         try {
