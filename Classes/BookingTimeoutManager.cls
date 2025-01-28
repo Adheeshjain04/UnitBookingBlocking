@@ -1,31 +1,42 @@
 public class BookingTimeoutManager {
     public static void scheduleUnitTimeouts(List<Id> unitIds) {
-        if (unitIds == null || unitIds.isEmpty()) {
-            return;
+        if (unitIds == null || unitIds.isEmpty()) return;
+        
+        // Process units in batches of 50 to reduce scheduled jobs
+        List<List<Id>> batchedUnits = new List<List<Id>>();
+        List<Id> currentBatch = new List<Id>();
+        
+        for (Id unitId : unitIds) {
+            currentBatch.add(unitId);
+            if (currentBatch.size() == 50) {
+                batchedUnits.add(currentBatch);
+                currentBatch = new List<Id>();
+            }
+        }
+        if (!currentBatch.isEmpty()) {
+            batchedUnits.add(currentBatch);
         }
         
-        // Calculate the time 30 minutes from now
         Datetime scheduleTime = System.now().addMinutes(30);
         
-        // Create scheduled jobs for each unit
-        for (Id unitId : unitIds) {
-            
-            // Create unique job name based on UnitId
-            String jobName = 'UnitTimeout_' + unitId + '_' + System.now().getTime();
-            
-            // Create Dynamic cron expression for exact time 
-            String cronExp = '' + scheduleTime.second() + ' ' 
-                            + scheduleTime.minute() + ' ' 
-                            + scheduleTime.hour() + ' ' 
-                            + scheduleTime.day() + ' ' 
-                            + scheduleTime.month() + ' ? ' 
-                            + scheduleTime.year();
+        for (List<Id> batch : batchedUnits) {
+            String jobName = 'UnitTimeout_Batch_' + System.currentTimeMillis();
+            String cronExp = String.format(
+                '{0} {1} {2} {3} {4} ? {5}',
+                new String[]{
+                    String.valueOf(scheduleTime.second()),
+                    String.valueOf(scheduleTime.minute()),
+                    String.valueOf(scheduleTime.hour()),
+                    String.valueOf(scheduleTime.day()),
+                    String.valueOf(scheduleTime.month()),
+                    String.valueOf(scheduleTime.year())
+                }
+            );
             
             try {
-                // Schedule the job
-                System.schedule(jobName, cronExp, new UnitTimeoutSchedulable(new List<Id>{unitId}));
+                System.schedule(jobName, cronExp, new UnitTimeoutSchedulable(batch));
             } catch (Exception e) {
-                System.debug('Failed schedule Timeout ' + unitId + ': ' + e.getMessage());
+                System.debug('Failed to schedule timeout for batch: ' + e.getMessage());
             }
         }
     }
