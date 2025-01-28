@@ -1,47 +1,46 @@
-trigger OpportunityBookingTrigger on Opportunity (before update) {
+trigger OpportunityBookingTrigger on Opportunity (before insert, before update) {
     Set<Id> unitIds = new Set<Id>();
     List<Unit__c> unitsToUpdate = new List<Unit__c>();
-    List<Id> unitsForTimeout = new List<Id>();
+    Set<Id> unitsToSchedule = new Set<Id>();
     
-    // Get All Unit IDs
+    // Collect all unit IDs
     for (Opportunity opp : Trigger.new) {
         if (opp.Unit_Number__c != null) {
             unitIds.add(opp.Unit_Number__c);
         }
     }
     
-    // Query all related units
+    if (unitIds.isEmpty()) return;
+    
+    // Query all units once
     Map<Id, Unit__c> unitsMap = new Map<Id, Unit__c>([
-        SELECT Id, Unit_Status__c, Blocked_By__c, Blocking_Expiry__c 
+        SELECT Id, Unit_Status__c 
         FROM Unit__c 
         WHERE Id IN :unitIds
     ]);
     
     for (Opportunity opp : Trigger.new) {
-        Opportunity oldOpp = Trigger.oldMap.get(opp.Id);
+        Opportunity oldOpp = Trigger.oldMap != null ? Trigger.oldMap.get(opp.Id) : null;
         
-        // Check if stage is being changed and unit is assigned
-        if (opp.StageName != oldOpp.StageName && 
-            opp.Unit_Number__c != null) {
-            
+        if (opp.Unit_Number__c != null) {
             Unit__c unit = unitsMap.get(opp.Unit_Number__c);
             
-            if (unit != null) {
-                // If unit is not Available and this opportunity isn't the one that blocked it
-                if (unit.Unit_Status__c != 'Available' && 
-                    (unit.Blocked_By__c != opp.Id || unit.Blocked_By__c == null)) {
-                    opp.StageName.addError('Cannot change opportunity stage while the unit is ' 
-                        + unit.Unit_Status__c + '. Please wait until the unit becomes Available.');
-                    continue;
-                }
+            if (unit != null && unit.Unit_Status__c == 'Sold') {
+                opp.addError('This unit has already been sold.');
+                continue;
+            }
+            
+            if ((Trigger.isInsert && opp.StageName == 'Booked') || 
+                (Trigger.isUpdate && oldOpp != null && 
+                 opp.StageName == 'Booked' && oldOpp.StageName != 'Booked')) {
                 
-                // If this is a new booking and unit is available
-                if (opp.StageName == 'Booked' && unit.Unit_Status__c == 'Available') {
+                opp.Blocking_Expiry__c = System.now().addMinutes(30);
+                unitsToSchedule.add(opp.Unit_Number__c);
+                
+                // Collect units to update instead of updating individually
+                if (unit.Unit_Status__c != 'Blocked' && unit.Unit_Status__c != 'Sold') {
                     unit.Unit_Status__c = 'Blocked';
-                    unit.Blocked_By__c = opp.Id;
-                    unit.Blocking_Expiry__c = System.now().addMinutes(30);
                     unitsToUpdate.add(unit);
-                    unitsForTimeout.add(unit.Id);
                 }
             }
         }
@@ -52,8 +51,7 @@ trigger OpportunityBookingTrigger on Opportunity (before update) {
         update unitsToUpdate;
     }
     
-    // Bulk schedule timeouts(After 30 Minutes)
-    if (!unitsForTimeout.isEmpty()) {
-        BookingTimeoutManager.scheduleUnitTimeouts(unitsForTimeout);
+    if (!unitsToSchedule.isEmpty()) {
+        BookingTimeoutManager.scheduleUnitTimeouts(new List<Id>(unitsToSchedule));
     }
 }
